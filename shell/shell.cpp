@@ -1,238 +1,131 @@
-#include <algorithm>
+#include "util/util.h"
 #include <cstddef>
-#include <cstdio>
 #include <cstdlib>
-#include <filesystem>
 #include <iostream>
 #include <vector>
 
 
-typedef enum {
-    C_EXIT,     // exit
-    C_ECHO,     // echo
-    C_TYPE,     // type
-    C_ERROR,    // error
-    C_EXEC,     // other
-} ShellContext;
-
-typedef struct {
-    bool error;
-    std::vector<std::string> exec_list;
-    std::vector<std::string> loc_list;
-} PATHMapping;
-
-
-std::vector<std::string> build_in_functions = { "echo", "type", "exit" };
-
-
-ShellContext getShellContext(std::string input);
-PATHMapping buildPATHMap(std::string path);
-bool handleCommonContext(std::string input, ShellContext context);
-bool handleTypeContext(std::string input, ShellContext context, PATHMapping pm);
-std::string trimString(size_t start, std::string input);
-std::vector<std::string> split(const std::string& str, char delimiter);
-void executeCommand(std::string input, ShellContext context, PATHMapping file_map);
+void handleExitCommand(std::vector<std::string> input);
+void handleEchoCommand(std::vector<std::string> input);
+void handleTypeCommand(
+    std::vector<std::string> input,
+    std::vector<FileLocMap> flm
+);
+void handleExecutableCommand(
+    std::vector<std::string> input,
+    std::vector<FileLocMap> flm
+);
 
 
 int main() {
     std::cout << std::unitbuf;
     std::cerr << std::unitbuf;
 
-    const char* path_env = std::getenv("PATH");
-    PATHMapping file_map = buildPATHMap(path_env);
+    const std::string path_env = std::getenv("PATH");
+    std::vector<std::string> PATHLocations =
+        splitStringOnDelimiter(path_env, ":");
+
+    std::vector<FileLocMap> flm = mapFileLocations(PATHLocations);
 
     while(true) {
         std::cout << "$ ";
-        std::string input;
-        std::getline(std::cin, input);
+        std::string user_input;
+        std::getline(std::cin, user_input);
 
-        if (input.empty()) continue;
+        const std::vector<std::string> input =
+            splitStringOnDelimiter(user_input, " ");
 
-        // Get context to continue
-        ShellContext context = getShellContext(input);
-        bool wasCommonContextHandled = handleCommonContext(input, context);
-
-        if (wasCommonContextHandled) {
+        if (input.size() == 0 || input[0] == "") {
             continue;
         }
 
-        bool wasTypeContextHandled = handleTypeContext(input, context, file_map);
-        if (wasTypeContextHandled) {
+        const CommandIdentifier ci = identifyCommand(input, flm);
+
+        if (ci == C_ECHO) {
+            handleEchoCommand(input);
             continue;
         }
 
-        executeCommand(input, context, file_map);
+        if (ci == C_EXIT) {
+            handleExitCommand(input);
+            continue;
+        }
 
-        std::cout << "unhandled error" << std::endl;
+        if (ci == C_TYPE) {
+            handleTypeCommand(input, flm);
+            continue;
+        }
+
+        if (ci == C_EXECUTABLE) {
+            handleExecutableCommand(input, flm);
+            continue;
+        }
+
+        if (ci == C_ILLEGAL) {
+            std::cout << input[0] << ": command not found" << std::endl;
+            continue;
+        }
+
+        // for (auto i : input) {
+        //     std::cout << i << std::endl;
+        // }
     }
-
-    // const std::string path(path_env);
-    // std::vector<std::string> paths = split_path(path);
-
-    // // Get all file names from PATH directories
-    // std::vector<FileAndCommand> file_list = build_file_list(paths);
-
-    // while (true) {
-    //     std::cout << "$ ";
-    //     std::string input;
-    //     std::getline(std::cin, input);
-
-    //     if (input.empty()) {
-    //         continue; // Ignore empty input
-    //     }
-
-    //     CommandType rc = identify_first_command(input);
-
-    //     if (rc == C_TYPE) {
-    //         std::string command_descriptor = input.substr(5); // Extract argument
-    //         if (command_descriptor == "echo") {
-    //             std::cout << "echo is a shell builtin" << std::endl;
-    //         } else if (command_descriptor == "exit") {
-    //             std::cout << "exit is a shell builtin" << std::endl;
-    //         } else if (command_descriptor == "type") {
-    //             std::cout << "type is a shell builtin" << std::endl;
-    //         } else {
-    //             auto it = std::find_if(file_list.begin(), file_list.end(),
-    //                                    [&command_descriptor](const FileAndCommand& entry) {
-    //                                    return entry.file == command_descriptor;
-    //                                    });
-
-    //             if (it != file_list.end()) {
-    //                 std::cout << command_descriptor << " is " << it->path << "/" << it->file << std::endl;
-    //             } else {
-    //                 std::cout << command_descriptor << ": not found" << std::endl;
-    //             }
-    //         }
-    //     } else if (rc == C_ECHO) {
-    //         std::cout << input.substr(5) << std::endl; // Output everything after "echo "
-    //     } else if (rc == C_EXIT) {
-    //         break;
-    //     } else if (rc == C_ERROR) {
-    //         std::cout << input << ": command not found" << std::endl;
-    //     }
-    // }
 
     return EXIT_SUCCESS;
 }
 
-
-void executeCommand(std::string input, ShellContext context, PATHMapping file_map) {
-
-}
-
-
-PATHMapping buildPATHMap(std::string path) {
-    PATHMapping pm;
-
-    if (path.empty()) {
-        pm.error = true;
-        return pm;
-    }
-
-    std::vector<std::string> exec_locations = split(path, ':');
-
-    for (auto exec_folder : exec_locations) {
-        for (auto entry : std::filesystem::directory_iterator(exec_folder)) {
-            if (entry.is_regular_file()) {
-                pm.loc_list.push_back(exec_folder);
-                pm.exec_list.push_back(entry.path().filename().string());
-            }
+void handleExecutableCommand(std::vector<std::string> input, std::vector<FileLocMap> flm) {
+    std::string buffer;
+    for (size_t idx = 0; idx < input.size(); idx++) {
+        if (idx == 0) {
+            buffer += input[idx];
+            continue;
         }
+        buffer += " " + input[idx];
     }
 
-    pm.error = true;
-    return pm;
+    const char *command_ptr = buffer.c_str();
+    system(command_ptr);
 }
 
-std::vector<std::string> split(const std::string& str, char delimiter) {
-    std::vector<std::string> result;
-    std::string current;
-
-    for (char ch : str) {
-        if (ch == delimiter) {
-            result.push_back(current);
-            current.clear();
-        } else {
-            current += ch;
-        }
+void handleTypeCommand(std::vector<std::string> input, std::vector<FileLocMap> flm) {
+    if (input[1] == "exit" || input[1] == "type" || input[1] == "echo") {
+        std::cout << input[1] << ": is a shell builtin" << std::endl;
+        return;
     }
 
-    if (!current.empty()) {
-        result.push_back(current);
-    }
-
-    return result;
-}
-
-bool handleTypeContext(std::string input, ShellContext context, PATHMapping pm) {
-    if (context != C_TYPE) return false;
-
-    std::string context_function = trimString(5, input);
-
-    if (std::find(
-        build_in_functions.begin(),
-        build_in_functions.end(),
-        context_function) != build_in_functions.end()
-    ) {
-        std::cout << context_function << " is a shell builtin" << std::endl;
-        return true;
-    }
-
-    auto it = std::find(pm.exec_list.begin(), pm.exec_list.end(), context_function);
-    if (it != pm.exec_list.end()) {
-        size_t index = std::distance(pm.exec_list.begin(), it);
+    if (doesFLMContainsExecutable(input[1], flm)) {
         std::cout
-            << context_function
+            << input[1]
             << " is "
-            << pm.loc_list[index]
+            << getFLMExecutablePath(input[1], flm)
             << "/"
-            << context_function
+            << input[1]
             << std::endl;
 
-        return true;
+        return;
     }
 
-    std::cout << context_function << ": not found" << std::endl;
-    return true;
+    std::cout << input[1] << ": not found" << std::endl;
 }
 
-
-ShellContext getShellContext(std::string input) {
-    if (input.rfind("exit 0", 0) == 0) return C_EXIT;
-    if (input.rfind("echo", 0) == 0) return C_ECHO;
-    if (input.rfind("type", 0) == 0) return C_TYPE;
-
-    return C_ERROR;
-}
-
-
-// Return fase if unhandled
-bool handleCommonContext(std::string input, ShellContext context) {
-    if (context == C_ECHO) {
-        std::cout << trimString(5, input) << std::endl;
-        return true;
+void handleEchoCommand(std::vector<std::string> input) {
+    std::string buffer;
+    for (size_t idx = 1; idx < input.size(); idx++) {
+        if (idx == 1) {
+            buffer += input[idx];
+            continue;
+        }
+        buffer += " " + input[idx];
     }
 
-    if (context == C_EXIT) {
+    std::cout << buffer << std::endl;
+}
+
+void handleExitCommand(std::vector<std::string> input) {
+    if (input[1] == "0") {
         exit(0);
     }
 
-    if (context == C_ERROR) {
-        std::cout << input << ": command not found" << std::endl;
-        return true;
-    }
-
-    return false;
-}
-
-
-std::string trimString(size_t start, std::string input) {
-    if (start >= input.length()) return "";
-
-    std::string buffer;
-    for (size_t idx = start; idx < input.length(); idx++) {
-        buffer += input[idx];
-    }
-
-    return buffer;
+    std::cout << input[0] << ": command not found" << std::endl;
 }
