@@ -75,16 +75,15 @@ int main() {
 }
 
 void handleExecutableCommand(std::vector<std::string> input, std::vector<FileLocMap> flm) {
+    std::string path = getFLMExecutablePath(input[0], flm);
+
     std::string buffer;
-    for (size_t idx = 0; idx < input.size(); idx++) {
-        if (idx == 0) {
-            buffer += input[idx];
-            continue;
-        }
+    for (size_t idx = 1; idx < input.size(); idx++) {
         buffer += " " + input[idx];
     }
 
-    const char *command_ptr = buffer.c_str();
+    std::string command = path + "/" + input[0] + buffer;
+    const char *command_ptr = command.c_str();
     system(command_ptr);
 }
 
